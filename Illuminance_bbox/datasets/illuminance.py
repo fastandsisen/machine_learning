@@ -1,9 +1,21 @@
+import os
 import torch
 import pandas as pd
 from torch.utils.data import Dataset
 import numpy as np
 import random
 import sys
+
+def parse_subject_label(ill_path):
+    """フォルダ名 "<被験者ID>_<名前>_<セッション>" から0始まりの被験者クラスIDを取得する"""
+    folder_name = os.path.basename(os.path.dirname(ill_path))
+    try:
+        return int(folder_name.split('_')[0]) - 1
+    except ValueError:
+        raise ValueError(
+            f"Could not parse subject ID from folder name '{folder_name}' (path: {ill_path}). "
+            "Expected format: '<subject_id>_<name>_<session>'."
+        )
 
 def box_cxcywh_to_xyxy(x):
     x_c, y_c, w, h = x.unbind(1)
@@ -95,6 +107,7 @@ class IlluminanceDetectionDataset(Dataset):
                     direction='nearest'
                 )
                 merged_df_single['source_dataset_id'] = source_dataset_id
+                merged_df_single['subject_label'] = parse_subject_label(ill_path)
                 
                 n_samples_merged = len(merged_df_single)
                 num_train = int(n_samples_merged * args.train_ratio)
@@ -176,6 +189,7 @@ class IlluminanceDetectionDataset(Dataset):
                     direction='nearest'
                 )
                 merged_df_single['source_dataset_id'] = source_dataset_id
+                merged_df_single['subject_label'] = parse_subject_label(ill_path)
                 
                 merged_files_to_concat.append(merged_df_single)
                 
@@ -335,19 +349,21 @@ class IlluminanceDetectionDataset(Dataset):
                 box[[2, 5]] /= space_d
                 
                 boxes_for_frame.append(box)
-                labels_for_frame.append(int(row['label']))
+                labels_for_frame.append(int(row['subject_label']))
                 if has_center_coords:
                     centers_for_frame.append(torch.tensor([row['center_x'], row['center_y']], dtype=torch.float32))
 
             boxes_xyzxyz = torch.stack(boxes_for_frame)
             boxes_cxcywhd = box_xyzxyz_to_cxcywhd(boxes_xyzxyz)
-            
+
             labels = torch.tensor(labels_for_frame, dtype=torch.long)
+            action_labels = torch.tensor([int(r['label']) for _, r in group.iterrows()], dtype=torch.long)
 
             first_row = group.iloc[0]
             target = {
                 'boxes': boxes_cxcywhd,
                 'labels': labels,
+                'action_labels': action_labels,
                 'image_id': torch.tensor([ill_center_idx]),
                 'orig_size': torch.tensor([space_h, space_w, space_d]),
                 'image_path': first_row['image_path']
